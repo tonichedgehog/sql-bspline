@@ -49,115 +49,48 @@
  * FITPACK SPLINE - SQLite extension for working with parametric BSplines.
  * -----------------------------------------------------------------------------
  *
- * Example 1 - Create a virtual table representing a parametric cubic spline,
- *   from a table with parameter and data columns. Column names from the input
- *   data table are used for naming the virtual table knot and coefficient
- *   columns.
- * 
- *   CREATE VIRTUAL TABLE vtab USING fitpack_spline(
- *       3,             -- BSpline degree
- *       0.1,           -- Evaluation step
- *       5e-2,          -- Smoothing factor
- *       aTable,        -- Input data table
- *       t,             -- Knot vector column in 'aTable'
- *       c1, ..., cn)   -- Coefficient columns in 'aTable'
- *
- * All arguments to the `fitpack_spline' virtual table are positional. At least one
- * value (or coefficient) column is required.
- *
- *   - BSpline degree. See https://netlib.org/dierckx/index.html regarding
- *       support for other than cubic splines.
- *
- *   - Evaluation step, defines the sampling distance to use on knots vector
- *       when evaluating the spline. The step is adjusted so that t0 + N*dt =
- *       t1, where N+1 becomes the number of virtual table rows.
- *
- *   - Smoothing factor, defines how close the resulting spline will follow the
- *       data points. When creating a spline from predefined knots and
- *       coefficients this parameter must be NULL.
- *
- *   - Input data table, specifying the input table or view to use as source for
- *       either data points or knot vector and coefficients. Any updates to the
- *       input table after the virtual is created are ignored.
- *
- *   - Parameter column, or knots when using predefined data. Values must be
- *       strict ascending. See below for layout of predefined knots and
- *       coefficients.
- *
- *   - Data point columns, or coefficients when using predefined data. See below
- *       for layout of predefined knots and coefficients.
- *
- * Example 2 - Create a virtual table from a table or view containing predefined
- *   knots and coefficients.
- *
- *   CREATE VIRTUAL TABLE vtab USING fitpack_spline(
- *       3,             -- BSpline degree
- *       0.1,           -- Evaluation step
- *       NULL,          -- Smoothing factor
- *       aTable,        -- Input data table
- *       t,             -- Knot vector column in 'aTable'
- *       c1, ..., cn)   -- Coefficient columns in 'aTable'
- * 
- * When creating a spline from predefined knots and coefficients, the layout of
- * the input data table is important. For a spline with degree k, n knots and m
- * coefficients, the relation n = m + k + 1 must hold. Hence, coefficient rows
- * are 'vertically centered', as illustraded below. Coefficients for the (k+1)/2
- * first and last rows shall be set to NULL or zero.
- * 
- *   +---------+----------+----------+
- *   | t       | c1       | c2       |
- *   +---------+----------+----------+
- *   | t_{1}   |        - |        - |
- *   | t_{2}   |        - |        - |
- *   | t_{3}   | c1_{1}   | c2_{1}   |
- *   | t_{4}   | c1_{2}   | c2_{2}   |
- *  ----8<-----------------------------
- *   | t_{n-3} | c1_{m-1} | c2_{m-1} |
- *   | t_{n-2} | c1_{m}   | c2_{m}   |
- *   | t_{n-1} |        - |        - |
- *   | t_{n}   |        - |        - |
- *   +---------+----------+----------+
+ * See readme.md for details.
  */
 
 SQLITE_EXTENSION_INIT1
 
-#define BZ_ARG_MNAME 0    /* Module name arg. */
-#define BZ_ARG_TABLE 2    /* Vtable name arg. */
-#define BZ_ARG_SPDEG 3    /* Bspline degree arg. */
-#define BZ_ARG_TSTEP 4    /* Evaluation delta arg. */
-#define BZ_ARG_SFACT 5    /* Smoothing factor. */
-#define BZ_ARG_INPUT 6    /* Input table arg. */
-#define BZ_ARG_T_COL 7    /* Knots column arg. */
-#define BZ_ARG_C_COL 8    /* 1:st coeff. column arg. */
+#define FPK_ARG_MNAME 0   /* Module name arg. */
+#define FPK_ARG_TABLE 2   /* Vtable name arg. */
+#define FPK_ARG_SPDEG 3   /* Bspline degree arg. */
+#define FPK_ARG_TSTEP 4   /* Evaluation delta arg. */
+#define FPK_ARG_SFACT 5   /* Smoothing factor. */
+#define FPK_ARG_INPUT 6   /* Input table arg. */
+#define FPK_ARG_T_COL 7   /* Knots column arg. */
+#define FPK_ARG_C_COL 8   /* 1:st coeff. column arg. */
 
-typedef enum bz_init_flags {
-	BZ_INIT_CONNECT = 1,  /* Connect to existing table. */
-	BZ_INIT_CREATE = 2,   /* Create new table. */
-	BZ_INIT_PREDEF = 4,   /* Create from knots and coef. */
-	BZ_INIT_SMOOTH = 8,   /* Smoothed spline from samples. */
-} bz_init_flags;
+typedef enum fpk_init_flags {
+	FPK_INIT_CONNECT = 1, /* Connect to existing table. */
+	FPK_INIT_CREATE = 2,  /* Create new table. */
+	FPK_INIT_PREDEF = 4,  /* Create from knots and coef. */
+	FPK_INIT_SMOOTH = 8,  /* Smoothed spline from samples. */
+} fpk_init_flags;
 
-typedef enum bz_eval_mode {
-	BZ_EVAL_EMPTY,        /* Query produces no rows. */
-	BZ_EVAL_POINT,        /* Query single point on knots vector. */
-	BZ_EVAL_RANGE,        /* Query an interval on knots vector. */
-} bz_eval_mode;
+typedef enum fpk_eval_mode {
+	FPK_EVAL_EMPTY,       /* Query produces no rows. */
+	FPK_EVAL_POINT,       /* Query single point on knots vector. */
+	FPK_EVAL_RANGE,       /* Query an interval on knots vector. */
+} fpk_eval_mode;
 
-typedef enum bz_eval_range {
-	BZ_RANGE_NONE,        /* No lower or upper bound. */
-	BZ_RANGE_LOWER,       /* Lower bound given. */
-	BZ_RANGE_UPPER,       /* Upper bound given. */
-} bz_eval_range;
+typedef enum fpk_eval_range {
+	FPK_RANGE_NONE,       /* No lower or upper bound. */
+	FPK_RANGE_LOWER,      /* Lower bound given. */
+	FPK_RANGE_UPPER,      /* Upper bound given. */
+} fpk_eval_range;
 
-typedef struct bz_arg {
+typedef struct fpk_arg {
 	const char *key;      /* Argument name. */
 	double val;           /* Argument value. */
-} bz_arg;
+} fpk_arg;
 
-typedef struct bz_cursor {
+typedef struct fpk_cursor {
 	sqlite3_vtab_cursor p;
-	bz_eval_mode mode;    /* Evaluation mode. */
-	bz_eval_range range;  /* Range constraints. */
+	fpk_eval_mode mode;   /* Evaluation mode. */
+	fpk_eval_range range; /* Range constraints. */
 	float lower;          /* Lower bound. */
 	float upper;          /* Upper bound. */
 	float *pX;            /* X-values to be evaluated. */
@@ -165,49 +98,27 @@ typedef struct bz_cursor {
 	int iCurX;            /* Current value. */ 
 	int iNumX;            /* Nr of X-values to evaluate. */
 	int bEval;            /* Current X-value is evaluated. */
-} bz_cursor;
+} fpk_cursor;
 
-typedef struct bz_vtab {
+typedef struct fpk_vtab {
 	sqlite3_vtab p;
 	sqlite3 *db;
-	bspline *pSpline;
-	char *zSrcTab;        /* Data source table, if any. */
+	bspline *pBSpline;    /* BSpline knots and coeff. */
 	char *zMetaTab;       /* Metadata table name. */
 	char *zDataTab;       /* Spline data table name. */
 	double sFact;         /* Smoothing factor. */
 	double tMin, tMax;    /* Knot vector limits. */
 	double tStep;         /* Evaluation step. */
 	int iCreat;           /* Create/connect mode. */
-	int iRowCount;        /* Virtual row count. */
-	int k;                /* BSpline degree. */
+	int iNRows;           /* Virtual row count. */
 	int iCdim;            /* Coeff dimension. */
-} bz_vtab;
+	int iOrder;           /* BSpline order. */
+} fpk_vtab;
 
 // ----------------------------------------------------------------------------
-static char* _bz_unquoted_str(
-	const char *str)
-{
-	char *dst;
-	const char *src;
-	size_t len = strlen(str) + 1;
-	char *ret = sqlite3_malloc(len * sizeof(char));
-	memset(ret, 0, len);
-	for (src = str, dst = ret; *src; src++) {
-		switch (*src) {
-		case '\'':
-		case '\"':
-			break;
-		default:
-			*dst++ = *src;
-		}
-	}
-	return ret;
-}
-
-// ----------------------------------------------------------------------------
-static int _bz_parse_args(
+static int _fpk_parse_args(
 	sqlite3 *db,
-	bz_vtab *pBzVtab,
+	fpk_vtab *pFpkVtab,
 	int argc,
 	const char* const argv[],
 	char **pzErr)
@@ -220,77 +131,70 @@ static int _bz_parse_args(
 	sqlite3_stmt *stmt = NULL;
 	sqlite3_str *sql = sqlite3_str_new(db);
 
-	pBzVtab->zMetaTab = sqlite3_mprintf("%s_meta", argv[BZ_ARG_TABLE]);
-	pBzVtab->zDataTab = sqlite3_mprintf("%s_data", argv[BZ_ARG_TABLE]);
+	pFpkVtab->zMetaTab = sqlite3_mprintf("%s_meta", argv[FPK_ARG_TABLE]);
+	pFpkVtab->zDataTab = sqlite3_mprintf("%s_data", argv[FPK_ARG_TABLE]);
 
 	/* Value dimension. */
-	if ((pBzVtab->iCdim = argc - BZ_ARG_C_COL) < 1) {
+	if ((pFpkVtab->iCdim = argc - FPK_ARG_C_COL) < 1) {
 		*pzErr = sqlite3_mprintf("usage: %s(k, dt, s, data, t, c1...cn))",
-			argv[BZ_ARG_MNAME]);
+			argv[FPK_ARG_MNAME]);
 		rc = SQLITE_ERROR;
 		goto onError_parse_args;
 	}
 
-	/* BSpline degree. */
-	pBzVtab->k = strtol(argv[BZ_ARG_SPDEG], &endp, 10);
-	if (pBzVtab->k < 1 || (endp && *endp)) {
+	/* BSpline order. */
+	pFpkVtab->iOrder = strtol(argv[FPK_ARG_SPDEG], &endp, 10) + 1;
+	if (pFpkVtab->iOrder < 2 || (endp && *endp)) {
 		*pzErr = sqlite3_mprintf("%s: invalid degree '%s'",
-			argv[BZ_ARG_MNAME],
-			argv[BZ_ARG_SPDEG]);
+			argv[FPK_ARG_MNAME],
+			argv[FPK_ARG_SPDEG]);
 		rc = SQLITE_ERROR;
 		goto onError_parse_args;
 	}
 
 	/* Evaluation step. */
-	pBzVtab->tStep = strtod(argv[BZ_ARG_TSTEP], &endp);
-	if (pBzVtab->tStep <= 0 || (endp && *endp)) {
+	pFpkVtab->tStep = strtod(argv[FPK_ARG_TSTEP], &endp);
+	if (pFpkVtab->tStep <= 0 || (endp && *endp)) {
 		*pzErr = sqlite3_mprintf("%s: invalid step '%s'",
-			argv[BZ_ARG_MNAME],
-			argv[BZ_ARG_TSTEP]);
+			argv[FPK_ARG_MNAME],
+			argv[FPK_ARG_TSTEP]);
 		rc = SQLITE_ERROR;
 		goto onError_parse_args;
 	}
 
 	/* Not creating a new vtable? Then done here. */
-	if (!(pBzVtab->iCreat & BZ_INIT_CREATE))
+	if (!(pFpkVtab->iCreat & FPK_INIT_CREATE))
 		goto onError_parse_args;
 
 	/* Smoothing factor. */
-	if (!sqlite3_stricmp(argv[BZ_ARG_SFACT], "NULL")) {
+	if (!sqlite3_stricmp(argv[FPK_ARG_SFACT], "NULL")) {
 		/* Use predefined knots and coeffs. */
-		pBzVtab->iCreat |= BZ_INIT_PREDEF;
+		pFpkVtab->iCreat |= FPK_INIT_PREDEF;
 	}
 	else {
 		/* Approximate samples with spline. */
-		pBzVtab->iCreat |= BZ_INIT_SMOOTH;
-		pBzVtab->sFact = strtod(argv[BZ_ARG_SFACT], &endp);
-		if (pBzVtab->sFact < 0 || (endp && *endp)) {
+		pFpkVtab->iCreat |= FPK_INIT_SMOOTH;
+		pFpkVtab->sFact = strtod(argv[FPK_ARG_SFACT], &endp);
+		if (pFpkVtab->sFact < 0 || (endp && *endp)) {
 			*pzErr = sqlite3_mprintf("%s: invalid smoothing factor '%s'",
-				argv[BZ_ARG_MNAME],
-				argv[BZ_ARG_SFACT]);
+				argv[FPK_ARG_MNAME],
+				argv[FPK_ARG_SFACT]);
 			rc = SQLITE_ERROR;
 			goto onError_parse_args;
 		}
 	}
 
-	/* Predefined data table name? */
-	zSrcTab = _bz_unquoted_str(argv[BZ_ARG_INPUT]);
-	if (zSrcTab && strlen(zSrcTab)) {
-		pBzVtab->zSrcTab = zSrcTab;
-		zSrcTab = NULL;
-	}
-
 	/* No predef table means done here. */
-	if (!pBzVtab->zSrcTab)
+	if (!sqlite3_stricmp(argv[FPK_ARG_INPUT], "NULL"))
 		goto onError_parse_args;
 
 	/* Check predef table exists. */
 	sqlite3_str_appendf(sql, "PRAGMA table_info(%s)",
-		pBzVtab->zSrcTab);
+		argv[FPK_ARG_INPUT]);
 	if ((rc = sqlite3_prepare_v2(db, sqlite3_str_value(sql), -1, &stmt, NULL))) {
 		*pzErr = sqlite3_mprintf("%s: table '%s' does not exists",
-			argv[BZ_ARG_MNAME],
-			pBzVtab->zSrcTab);
+			argv[FPK_ARG_MNAME],
+			argv[FPK_ARG_INPUT]);
 		rc = SQLITE_ERROR;
 		goto onError_parse_args;
 	}
@@ -307,7 +211,7 @@ static int _bz_parse_args(
 		goto onError_parse_args;
 
 	/* Compare given predef columns against those found. */
-	for (int i = BZ_ARG_T_COL, bFound = 0; i < argc; i++, bFound = 0) {
+	for (int i = FPK_ARG_T_COL, bFound = 0; i < argc; i++, bFound = 0) {
 		for (int j = 0; j < iNumCols; j++) {
 			if (!strcmp(argv[i], pzColNames[j])) {
 				bFound = 1;
@@ -316,8 +220,8 @@ static int _bz_parse_args(
 		}
 		if (!bFound) {
 			*pzErr = sqlite3_mprintf("%s: table '%s' has no column '%s'",
-				argv[BZ_ARG_MNAME],
-				pBzVtab->zSrcTab,
+				argv[FPK_ARG_MNAME],
+				argv[FPK_ARG_INPUT],
 				argv[i]);
 			rc = SQLITE_ERROR;
 			goto onError_parse_args;
@@ -338,9 +242,9 @@ onError_parse_args:
 }
 
 // ----------------------------------------------------------------------------
-static int _bz_create_tables(
+static int _fpk_create_tables(
 	sqlite3 *db,
-	bz_vtab *pBzVtab,
+	fpk_vtab *pFpkVtab,
 	int argc,
 	const char* const argv[],
 	char **pzErr)
@@ -350,9 +254,9 @@ static int _bz_create_tables(
 
 	/* Create backing table for knots and coefficients. */
 	sqlite3_str_appendf(sql, "CREATE TABLE %s(%s REAL",
-		pBzVtab->zDataTab,
-		argv[BZ_ARG_T_COL]);
-	for (int i = BZ_ARG_C_COL; i < argc; i++)
+		pFpkVtab->zDataTab,
+		argv[FPK_ARG_T_COL]);
+	for (int i = FPK_ARG_C_COL; i < argc; i++)
 		sqlite3_str_appendf(sql, ", %s REAL", argv[i]);
 	sqlite3_str_appendchar(sql, 1, ')');
 
@@ -362,7 +266,7 @@ static int _bz_create_tables(
 	/* Create backing table for metadata. */
 	sqlite3_str_reset(sql);
 	sqlite3_str_appendf(sql, "CREATE TABLE %s(key TEXT, val REAL)",
-		pBzVtab->zMetaTab);
+		pFpkVtab->zMetaTab);
 
 	if ((rc = sqlite3_exec(db, sqlite3_str_value(sql), NULL, NULL, pzErr)))
 		goto onError_create_tables;
@@ -373,9 +277,9 @@ onError_create_tables:
 }	
 
 // ----------------------------------------------------------------------------
-static int _bz_save_meta(
+static int _fpk_save_meta(
 	sqlite3 *db,
-	bz_vtab *pBzVtab,
+	fpk_vtab *pFpkVtab,
 	int argc,
 	const char* const argv[],
 	char **pzErr)
@@ -384,20 +288,20 @@ static int _bz_save_meta(
 	int rc = SQLITE_OK;
 	sqlite3_str *sql = sqlite3_str_new(db);
 	sqlite3_stmt *stmt = NULL;
-	bz_arg meta[3] = {
-		{"k", pBzVtab->k},
-		{"d", pBzVtab->tStep},
-		{"s", pBzVtab->sFact},
+	fpk_arg meta[3] = {
+		{"k", pFpkVtab->iOrder},
+		{"d", pFpkVtab->tStep},
+		{"s", pFpkVtab->sFact},
 	};
 
 	/* Save spline metadata. */
 	sqlite3_str_appendf(sql, "INSERT INTO %s VALUES (?1, ?2)",
-		pBzVtab->zMetaTab);
+		pFpkVtab->zMetaTab);
 
 	if ((rc = sqlite3_prepare_v2(db, sqlite3_str_value(sql), -1, &stmt, NULL)))
 		goto onError_save_meta;
 
-	for (int i = 0; i < sizeof(meta) / sizeof(bz_arg); i++) {
+	for (int i = 0; i < sizeof(meta) / sizeof(fpk_arg); i++) {
 
 		if ((rc = sqlite3_bind_text(stmt, 1, meta[i].key, -1, SQLITE_STATIC)))
 			goto onError_save_meta;
@@ -421,9 +325,9 @@ onError_save_meta:
 }
 
 // ----------------------------------------------------------------------------
-static int _bz_save_predef(
+static int _fpk_save_predef(
 	sqlite3 *db,
-	bz_vtab *pBzVtab,
+	fpk_vtab *pFpkVtab,
 	int argc,
 	const char* const argv[],
 	char **pzErr)
@@ -438,14 +342,10 @@ static int _bz_save_predef(
 	sqlite3_stmt *stmt1 = NULL;
 	sqlite3_stmt *stmt2 = NULL;
 
-	/* No predef knota and coeff to save? Then skip. */
-	if (!pBzVtab->zSrcTab)
-		goto onError_save_predef;
-
-	sqlite3_str_appendf(cols, "%s", argv[BZ_ARG_T_COL]);
+	sqlite3_str_appendf(cols, "%s", argv[FPK_ARG_T_COL]);
 	sqlite3_str_appendf(vals, "%s", "?");
 
-	for (int i = BZ_ARG_C_COL; i < argc; i++) {
+	for (int i = FPK_ARG_C_COL; i < argc; i++) {
 		sqlite3_str_appendf(cols, ",%s", argv[i]);
 		sqlite3_str_appendf(vals, ",?");
 	}
@@ -453,14 +353,14 @@ static int _bz_save_predef(
 	/* Fetch given kots and coefficients. */
 	sqlite3_str_appendf(sql, "SELECT %s FROM %s",
 		sqlite3_str_value(cols),
-		argv[BZ_ARG_INPUT]);
+		argv[FPK_ARG_INPUT]);
 
 	if ((rc = sqlite3_prepare_v2(db, sqlite3_str_value(sql), -1, &stmt1, &tail)))
 		goto onError_save_predef;
 
 	sqlite3_str_reset(sql);
 	sqlite3_str_appendf(sql, "INSERT INTO %s (%s) VALUES (%s)",
-		pBzVtab->zDataTab,
+		pFpkVtab->zDataTab,
 		sqlite3_str_value(cols),
 		sqlite3_str_value(vals));
 
@@ -470,7 +370,7 @@ static int _bz_save_predef(
 	/* Store spline data in private backing table. */
 	while ((rc = sqlite3_step(stmt1)) == SQLITE_ROW) {
 
-		for (int i = 0; i <= pBzVtab->iCdim; i++)
+		for (int i = 0; i <= pFpkVtab->iCdim; i++)
 			sqlite3_bind_value(stmt2, i+1, sqlite3_column_value(stmt1, i));
 
 		if ((rc = sqlite3_step(stmt2)) != SQLITE_DONE)
@@ -495,9 +395,9 @@ onError_save_predef:
 }
 
 // ----------------------------------------------------------------------------
-static int _bz_declare_vtab(
+static int _fpk_declare_vtab(
 	sqlite3 *db,
-	bz_vtab *pBzVtab,
+	fpk_vtab *pFpkVtab,
 	int argc,
 	const char* const argv[],
 	char **pzErr)
@@ -507,12 +407,12 @@ static int _bz_declare_vtab(
 
 	/* Build pseudo-create statement. */
 	sqlite3_str_appendall(schema, "CREATE TABLE x(");
-	for (int i = BZ_ARG_T_COL; i < argc; i++) {
-		if (i > BZ_ARG_T_COL)
+	for (int i = FPK_ARG_T_COL; i < argc; i++) {
+		if (i > FPK_ARG_T_COL)
 			sqlite3_str_appendchar(schema, 1, ',');
 		sqlite3_str_appendall(schema, argv[i]);
 		sqlite3_str_appendall(schema, " REAL");
-		if (i == BZ_ARG_T_COL)
+		if (i == FPK_ARG_T_COL)
 			sqlite3_str_appendall(schema, " PRIMARY KEY");
 	}
 	sqlite3_str_appendall(schema, ") WITHOUT ROWID");
@@ -527,16 +427,28 @@ onError_decl_vtab:
 		sqlite3_free(*pzErr);
 	if (rc)
 		*pzErr = sqlite3_mprintf("%s: (%s): %s",
-			argv[BZ_ARG_MNAME],
+			argv[FPK_ARG_MNAME],
 			__func__,
 			sqlite3_errstr(rc));
 	return rc;
 }
 
 // ----------------------------------------------------------------------------
-static int _bz_approx_bspline(
+static void _fpk_compute_nrow(
+	fpk_vtab *pFpkVtab)
+{
+	pFpkVtab->tMin = pFpkVtab->pBSpline->t[0];
+	pFpkVtab->tMax = pFpkVtab->pBSpline->t[pFpkVtab->pBSpline->n - 1];
+
+	/* Sampled number of rows. */
+	pFpkVtab->iNRows = (int)ceil((pFpkVtab->tMax - pFpkVtab->tMin) / pFpkVtab->tStep) + 1;
+	pFpkVtab->tStep = (pFpkVtab->tMax - pFpkVtab->tMin) / (double)(pFpkVtab->iNRows - 1);
+}
+
+// ----------------------------------------------------------------------------
+static int _fpk_approx_bspline(
 	sqlite3 *db,
-	bz_vtab *pBzVtab,
+	fpk_vtab *pFpkVtab,
 	int argc,
 	const char* const argv[],
 	char **pzErr)
@@ -545,9 +457,9 @@ static int _bz_approx_bspline(
 	int iRow = 0, iNx = 0;
 	float *pU = NULL, *pX = NULL;
 	const char *tail = NULL;
-	int k = pBzVtab->k;
-	int iXdim = pBzVtab->iCdim;
-	float s = pBzVtab->sFact;
+	int k = pFpkVtab->iOrder - 1;
+	int iXdim = pFpkVtab->iCdim;
+	float s = pFpkVtab->sFact;
 	sqlite3_stmt *stmt = NULL;
 	sqlite3_str *sql = sqlite3_str_new(db);
 	sqlite3_str *cols = sqlite3_str_new(db);
@@ -555,7 +467,7 @@ static int _bz_approx_bspline(
 
 	/* Query for size of input. */
 	sqlite3_str_appendf(sql, "SELECT COUNT(*) FROM %s",
-		pBzVtab->zSrcTab);
+		argv[FPK_ARG_INPUT]);
 
 	if ((rc = sqlite3_prepare_v2(db, sqlite3_str_value(sql), -1, &stmt, &tail)))
 		goto onError_approx_bspline;
@@ -567,7 +479,7 @@ static int _bz_approx_bspline(
 	if (!(iNx = sqlite3_column_int(stmt, 0))) {
 		assert(!*pzErr);
 		*pzErr = sqlite3_mprintf("%s: to few samples: %d",
-			argv[BZ_ARG_MNAME],
+			argv[FPK_ARG_MNAME],
 			iNx);
 		rc = SQLITE_ERROR;
 		goto onError_approx_bspline;
@@ -577,8 +489,8 @@ static int _bz_approx_bspline(
 	pU = sqlite3_malloc(iNx * sizeof(float));
 	pX = sqlite3_malloc(iNx * sizeof(float) * iXdim);
 
-	for (int i = BZ_ARG_T_COL; i < argc; i++) {
-		if (i > BZ_ARG_T_COL) {
+	for (int i = FPK_ARG_T_COL; i < argc; i++) {
+		if (i > FPK_ARG_T_COL) {
 			sqlite3_str_appendchar(cols, 1, ',');
 			sqlite3_str_appendchar(vals, 1, ',');
 		}
@@ -592,7 +504,7 @@ static int _bz_approx_bspline(
 
 	sqlite3_str_appendf(sql, "SELECT %s FROM %s",
 		sqlite3_str_value(cols),
-		pBzVtab->zSrcTab);
+		argv[FPK_ARG_INPUT]);
 
 	if ((rc = sqlite3_prepare_v2(db, sqlite3_str_value(sql), -1, &stmt, &tail)))
 		goto onError_approx_bspline;
@@ -600,7 +512,7 @@ static int _bz_approx_bspline(
 	while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
 
 		pU[iRow] = (float)sqlite3_column_double(stmt, 0);
-		for (int iCol = 0; iCol < pBzVtab->iCdim; iCol++) {
+		for (int iCol = 0; iCol < pFpkVtab->iCdim; iCol++) {
 			pX[iRow * iXdim + iCol] = (float)sqlite3_column_double(
 				stmt, iCol + 1);
 		}
@@ -609,23 +521,24 @@ static int _bz_approx_bspline(
 	assert(iRow == iNx);
 
 	/* Approximate data points with BSpline. */
-	if ((rc = splprep(&pBzVtab->pSpline, pX, iXdim, iNx, pU, iNx, k, s)) > 0) {
+	if ((rc = splprep(&pFpkVtab->pBSpline, pX, iXdim, iNx, pU, iNx, k, s)) > 0) {
 		switch (rc) {
 		case 1:
 		case 2:
 		case 3:
 			*pzErr = sqlite3_mprintf("%s: smoothing spline failed with error %d, factor too small?",
-				argv[BZ_ARG_MNAME], rc);
+				argv[FPK_ARG_MNAME], rc);
 			break;
 		case 10:
 			*pzErr = sqlite3_mprintf("%s: smoothing spline consistency check failed with error %d",
-				argv[BZ_ARG_MNAME], rc);
+				argv[FPK_ARG_MNAME], rc);
 			break;
 		}
 		rc = SQLITE_ERROR;
 		goto onError_approx_bspline;
 	}
 	rc = SQLITE_OK;
+	_fpk_compute_nrow(pFpkVtab);
 
 onError_approx_bspline:
 	sqlite3_free(sqlite3_str_finish(sql));
@@ -638,9 +551,9 @@ onError_approx_bspline:
 }
 
 // ----------------------------------------------------------------------------
-static int _bz_save_bspline(
+static int _fpk_save_bspline(
 	sqlite3 *db,
-	bz_vtab *pBzVtab,
+	fpk_vtab *pFpkVtab,
 	int argc,
 	const char* const argv[],
 	char **pzErr)
@@ -648,14 +561,14 @@ static int _bz_save_bspline(
 	int rc = SQLITE_OK;
 	int iRow = 0, iNx = 0;
 	const char *tail = NULL;
-	int offset = (pBzVtab->k + 1) / 2;
+	int offset = pFpkVtab->iOrder / 2;
 	sqlite3_stmt *stmt = NULL;
 	sqlite3_str *sql = sqlite3_str_new(db);
 	sqlite3_str *cols = sqlite3_str_new(db);
 	sqlite3_str *vals = sqlite3_str_new(db);
 
-	for (int i = BZ_ARG_T_COL; i < argc; i++) {
-		if (i > BZ_ARG_T_COL) {
+	for (int i = FPK_ARG_T_COL; i < argc; i++) {
+		if (i > FPK_ARG_T_COL) {
 			sqlite3_str_appendchar(cols, 1, ',');
 			sqlite3_str_appendchar(vals, 1, ',');
 		}
@@ -666,34 +579,37 @@ static int _bz_save_bspline(
 
 	/* Save spline to backing table. */
 	sqlite3_str_appendf(sql, "INSERT INTO %s (%s) VALUES (%s)",
-		pBzVtab->zDataTab,
+		pFpkVtab->zDataTab,
 		sqlite3_str_value(cols),
 		sqlite3_str_value(vals));
 
 	if ((rc = sqlite3_prepare_v2(db, sqlite3_str_value(sql), -1, &stmt, &tail)))
-		goto onError_approx_bspline;
+		goto onError_save_bspline;
 
-	for (iRow = 0; iRow < pBzVtab->pSpline->n; iRow++) {
+	for (iRow = 0; iRow < pFpkVtab->pBSpline->n; iRow++) {
 
-		sqlite3_bind_double(stmt, 1, pBzVtab->pSpline->t[iRow]);
+		sqlite3_bind_double(stmt, 1, pFpkVtab->pBSpline->t[iRow]);
 
-		for (int iCol = 0; iCol < pBzVtab->iCdim; iCol++) {
+		for (int iCol = 0; iCol < pFpkVtab->iCdim; iCol++) {
 
-			float *c = pBzVtab->pSpline->c;
-			int nc = pBzVtab->pSpline->nc;
+			float *c = pFpkVtab->pBSpline->c;
+			int nc = pFpkVtab->pBSpline->nc;
 			if (iRow >= offset && iRow < nc + offset) {
 				sqlite3_bind_double(stmt, iCol + 2, c[iCol * iNx + iRow - offset]);
 			}
 		}
 		if ((rc = sqlite3_step(stmt)) != SQLITE_DONE)
-			goto onError_approx_bspline;
+			goto onError_save_bspline;
 
 		if ((rc = sqlite3_reset(stmt)) != SQLITE_OK)
-			goto onError_approx_bspline;
+			goto onError_save_bspline;
+
+		if ((rc = sqlite3_clear_bindings(stmt)) != SQLITE_OK)
+			goto onError_save_bspline;
 	}
 	rc = SQLITE_OK;
 
-onError_approx_bspline:
+onError_save_bspline:
 	sqlite3_free(sqlite3_str_finish(sql));
 	sqlite3_free(sqlite3_str_finish(cols));
 	sqlite3_free(sqlite3_str_finish(vals));
@@ -702,9 +618,9 @@ onError_approx_bspline:
 }
 
 // ----------------------------------------------------------------------------
-static int _bz_build_bspline(
+static int _fpk_build_bspline(
 	sqlite3 *db,
-	bz_vtab *pBzVtab,
+	fpk_vtab *pFpkVtab,
 	int argc,
 	const char* const argv[],
 	char **pzErr)
@@ -712,14 +628,14 @@ static int _bz_build_bspline(
 	int iNumCoeff, iNumKnots;
 	int rc = SQLITE_OK;
 	int iRow = 0;
-	int offset = (pBzVtab->k + 1) / 2;
+	int offset = pFpkVtab->iOrder / 2;
 	float *t = NULL, *c = NULL;
 	const char *tail = NULL;
 	sqlite3_str *sql = sqlite3_str_new(db);
 	sqlite3_stmt *stmt = NULL;
 
 	sqlite3_str_appendf(sql, "SELECT COUNT(*) from %s",
-		pBzVtab->zDataTab);
+		pFpkVtab->zDataTab);
 
 	if ((rc = sqlite3_prepare_v2(db, sqlite3_str_value(sql), -1, &stmt, &tail)))
 		goto onError_build_bspline;
@@ -731,25 +647,25 @@ static int _bz_build_bspline(
 	if (!(iNumKnots = sqlite3_column_int(stmt, 0))) {
 		assert(!*pzErr);
 		*pzErr = sqlite3_mprintf("%s: to few knots: %d",
-			argv[BZ_ARG_MNAME],
+			argv[FPK_ARG_MNAME],
 			iNumKnots);
 		rc = SQLITE_ERROR;
 		goto onError_build_bspline;
 	}
 
-	if ((iNumCoeff = iNumKnots - pBzVtab->k - 1) < 1) {
+	if ((iNumCoeff = iNumKnots - pFpkVtab->iOrder) < 1) {
 		*pzErr = sqlite3_mprintf("%s: to few coefficients (%d)",
-			argv[BZ_ARG_MNAME],
+			argv[FPK_ARG_MNAME],
 			iNumCoeff);
 		rc = SQLITE_ERROR;
 		goto onError_build_bspline;
 	};
 	t = sqlite3_malloc(iNumKnots * sizeof(float));
-	c = sqlite3_malloc(iNumKnots * sizeof(float) * pBzVtab->iCdim);
+	c = sqlite3_malloc(iNumKnots * sizeof(float) * pFpkVtab->iCdim);
 
 	sqlite3_str_reset(sql);
 	sqlite3_str_appendf(sql, "SELECT * from %s",
-		pBzVtab->zDataTab);
+		pFpkVtab->zDataTab);
 
 	if ((rc = sqlite3_finalize(stmt)))
 		goto onError_build_bspline;
@@ -761,7 +677,7 @@ static int _bz_build_bspline(
 
 		t[iRow] = sqlite3_column_double(stmt, 0);
 
-		for (int iCol = 0; iCol < pBzVtab->iCdim; iCol++)
+		for (int iCol = 0; iCol < pFpkVtab->iCdim; iCol++)
 			if (iRow >= offset && iRow < iNumCoeff + offset)
 				c[iCol * iNumKnots + iRow - offset] = (float)
 					sqlite3_column_double(stmt, iCol + 1);
@@ -771,23 +687,20 @@ static int _bz_build_bspline(
 
 	if (rc != SQLITE_DONE) {
 		*pzErr = sqlite3_mprintf("%s: %s inconsistent row count",
-			argv[BZ_ARG_MNAME],
-			pBzVtab->zDataTab);
+			argv[FPK_ARG_MNAME],
+			pFpkVtab->zDataTab);
 		goto onError_build_bspline;
 	}
-	else
-		rc = SQLITE_OK;
+	rc = SQLITE_OK;
 
-	if (splcreate(&pBzVtab->pSpline, t, iNumKnots, c, iNumCoeff, pBzVtab->iCdim, pBzVtab->k)) {
+	if (splcreate(&pFpkVtab->pBSpline, t, iNumKnots, c, iNumCoeff, pFpkVtab->iCdim, pFpkVtab->iOrder - 1)) {
 		rc = SQLITE_ERROR;
+		*pzErr = sqlite3_mprintf("%s: %s inconsistent spline data",
+			argv[FPK_ARG_MNAME],
+			pFpkVtab->zDataTab);
 		goto onError_build_bspline;
 	}
-	pBzVtab->tMin = pBzVtab->pSpline->t[0];
-	pBzVtab->tMax = pBzVtab->pSpline->t[pBzVtab->pSpline->n - 1];
-
-	/* Sampled number of rows. */
-	pBzVtab->iRowCount = (int)ceil((pBzVtab->tMax - pBzVtab->tMin) / pBzVtab->tStep) + 1;
-	pBzVtab->tStep = (pBzVtab->tMax - pBzVtab->tMin) / (double)(pBzVtab->iRowCount - 1);
+	_fpk_compute_nrow(pFpkVtab);
 
 
 onError_build_bspline:
@@ -800,53 +713,129 @@ onError_build_bspline:
 }
 
 // ----------------------------------------------------------------------------
-static int _bz_eval_spline(
-	bz_cursor *pBzCursor)
+static int _fpk_eval_spline(
+	fpk_cursor *pFpkCursor)
 {
 	int rc;
-	bz_vtab *pBzVtab = (bz_vtab*)pBzCursor->p.pVtab;
-	float *pKnot = pBzCursor->pX + pBzCursor->iCurX;
+	fpk_vtab *pFpkVtab = (fpk_vtab*)pFpkCursor->p.pVtab;
+	float *pKnot = pFpkCursor->pX + pFpkCursor->iCurX;
 
-	if ((rc = splev(pBzVtab->pSpline, pKnot, pBzCursor->pRow, 1)))
+	if ((rc = splev(pFpkVtab->pBSpline, pKnot, pFpkCursor->pRow, 1)))
 		return SQLITE_ABORT;
 
-	pBzCursor->bEval = 1;
+	pFpkCursor->bEval = 1;
 	return SQLITE_OK;
 }
 
 // ----------------------------------------------------------------------------
-static int bz_disconnect(
+static void fpk_eval(
+	sqlite3_context *ctx,
+	int argc,
+	sqlite3_value **argv)
+{
+	int rc;
+	fpk_vtab *pFpkVtab = (fpk_vtab*)sqlite3_user_data(ctx);
+	float x = (float)sqlite3_value_double(argv[argc-2]);
+	int iCol = sqlite3_value_int(argv[argc-1]);
+	float *u = sqlite3_malloc(sizeof(float) * pFpkVtab->iCdim);
+
+	if (iCol < 1 || iCol > pFpkVtab->iCdim) {
+		char buf[127];
+		snprintf(buf, sizeof(buf), "%s: invalid column %d", __func__, iCol);
+		sqlite3_result_error(ctx, buf, -1);
+		goto onError_evaluate;
+	}
+	if (x < pFpkVtab->tMin || x > pFpkVtab->tMax) {
+		sqlite3_result_null(ctx);
+		goto onError_evaluate;
+	}
+	if ((rc = splev(pFpkVtab->pBSpline, &x, u, 1))) {
+		sqlite3_set_errmsg(pFpkVtab->db, -1, "inconsistent spline");
+		goto onError_evaluate;
+	}
+
+	sqlite3_result_double(ctx, u[iCol-1]);
+
+onError_evaluate:
+	sqlite3_free(u);
+}
+
+// ----------------------------------------------------------------------------
+static void fpk_derive(
+	sqlite3_context *ctx,
+	int argc,
+	sqlite3_value **argv)
+{
+	fpk_vtab *pFpkVtab = (fpk_vtab*)sqlite3_user_data(ctx);
+	int iCol = sqlite3_value_int(argv[argc-1]);
+	float *pAux = (float*)sqlite3_get_auxdata(ctx, argc-2);
+	int kd = 1; /* 1:st derivative. */
+	int bHasAux = !!pAux;
+
+	if (iCol < 1 || iCol > pFpkVtab->iCdim) {
+		char buf[127];
+		snprintf(buf, sizeof(buf), "%s: invalid column %d", __func__, iCol);
+		sqlite3_result_error(ctx, buf, -1);
+		return;
+	}
+	if (!pAux) {
+		int nd = pFpkVtab->iCdim * pFpkVtab->iOrder;
+		float u = (float)sqlite3_value_double(argv[argc-2]);
+		if (!(pAux = (float*)sqlite3_malloc(nd * sizeof(float)))) {
+			char buf[127];
+			snprintf(buf, sizeof(buf), "%s: no memory", __func__);
+			sqlite3_result_error(ctx, buf, -1);
+			return;
+		}
+		if (splder(pFpkVtab->pBSpline, u, pAux, nd)) {
+			char buf[127];
+			snprintf(buf, sizeof(buf), "%s: inconsistent spline", __func__);
+			sqlite3_result_error(ctx, buf, -1);
+			sqlite3_free(pAux);
+			return;
+		}
+	}
+
+	int offset = pFpkVtab->iCdim * kd + iCol - 1;
+	sqlite3_result_double(ctx, pAux[offset]);
+	if (!bHasAux) { /* Last, as dtor may be invoked during call. */
+		sqlite3_set_auxdata(ctx, argc-2, pAux, sqlite3_free);
+	}
+}
+
+
+// ----------------------------------------------------------------------------
+static int fpk_disconnect(
 	sqlite3_vtab *pVTab)
 {
 	int rc = SQLITE_OK;
-	bz_vtab *pBzVtab = (bz_vtab*)pVTab;
-	if (pBzVtab->zMetaTab) sqlite3_free(pBzVtab->zMetaTab);
-	if (pBzVtab->zDataTab) sqlite3_free(pBzVtab->zDataTab);
-	if (pBzVtab->zSrcTab) sqlite3_free(pBzVtab->zSrcTab);
-	if (pBzVtab->pSpline) spldestroy(&pBzVtab->pSpline);
-	sqlite3_free(pBzVtab);
+	fpk_vtab *pFpkVtab = (fpk_vtab*)pVTab;
+	if (pFpkVtab->zMetaTab) sqlite3_free(pFpkVtab->zMetaTab);
+	if (pFpkVtab->zDataTab) sqlite3_free(pFpkVtab->zDataTab);
+	if (pFpkVtab->pBSpline) spldestroy(&pFpkVtab->pBSpline);
+	sqlite3_free(pFpkVtab);
 	return rc;
 }
 
 // ----------------------------------------------------------------------------
-static int bz_destroy(
+static int fpk_destroy(
 	sqlite3_vtab *pVTab)
 {
 	int rc = SQLITE_OK;
 	sqlite3_str *sql = NULL;
-	bz_vtab *pBzVtab = (bz_vtab*)pVTab;
+	fpk_vtab *pFpkVtab = (fpk_vtab*)pVTab;
 
-	sql = sqlite3_str_new(pBzVtab->db);
-	sqlite3_str_appendf(sql, "DROP TABLE IF EXISTS %s", pBzVtab->zDataTab);
-	if ((rc = sqlite3_exec(pBzVtab->db, sqlite3_str_value(sql), NULL, NULL, NULL)))
+	sql = sqlite3_str_new(pFpkVtab->db);
+	sqlite3_str_appendf(sql, "DROP TABLE IF EXISTS %s", pFpkVtab->zDataTab);
+	if ((rc = sqlite3_exec(pFpkVtab->db, sqlite3_str_value(sql), NULL, NULL, NULL)))
 		goto onError_destroy;
 
 	sqlite3_str_reset(sql);
-	sqlite3_str_appendf(sql, "DROP TABLE IF EXISTS %s", pBzVtab->zMetaTab);
-	if ((rc = sqlite3_exec(pBzVtab->db, sqlite3_str_value(sql), NULL, NULL, NULL)))
+	sqlite3_str_appendf(sql, "DROP TABLE IF EXISTS %s", pFpkVtab->zMetaTab);
+	if ((rc = sqlite3_exec(pFpkVtab->db, sqlite3_str_value(sql), NULL, NULL, NULL)))
 		goto onError_destroy;
 
-	if ((rc = bz_disconnect(pVTab)))
+	if ((rc = fpk_disconnect(pVTab)))
 		goto onError_destroy;
 
 onError_destroy:
@@ -855,7 +844,7 @@ onError_destroy:
 }
 
 // ----------------------------------------------------------------------------
-static int bz_create(
+static int fpk_create(
 	sqlite3 *db,
 	void *pAux,
 	int argc,
@@ -864,11 +853,11 @@ static int bz_create(
 	char **pzErr)
 {
 	int rc = SQLITE_OK;
-	bz_vtab *pBzVtab = pBzVtab = sqlite3_malloc(sizeof(bz_vtab));
-	memset(pBzVtab, 0, sizeof(bz_vtab));
-	pBzVtab->iCreat = BZ_INIT_CREATE;
-	pBzVtab->db = db;
-	*ppVTab = (sqlite3_vtab*)pBzVtab;
+	fpk_vtab *pFpkVtab = pFpkVtab = sqlite3_malloc(sizeof(fpk_vtab));
+	memset(pFpkVtab, 0, sizeof(fpk_vtab));
+	pFpkVtab->iCreat = FPK_INIT_CREATE;
+	pFpkVtab->db = db;
+	*ppVTab = (sqlite3_vtab*)pFpkVtab;
 
 	/* Set by subroutines on error. */
 	if (*pzErr) {
@@ -877,46 +866,46 @@ static int bz_create(
 	}
 
 	/* Nr of knots and coefficient rows. */
-	if ((rc = _bz_parse_args(db, pBzVtab, argc, argv, pzErr)))
+	if ((rc = _fpk_parse_args(db, pFpkVtab, argc, argv, pzErr)))
 		goto onError;
  
 	/* Declare vtab schema. */
-	if ((rc = _bz_declare_vtab(db, pBzVtab, argc, argv, pzErr)))
+	if ((rc = _fpk_declare_vtab(db, pFpkVtab, argc, argv, pzErr)))
 		goto onError;
 
 	/* Create backing tables. */
-	if ((rc = _bz_create_tables(db, pBzVtab, argc, argv, pzErr)))
+	if ((rc = _fpk_create_tables(db, pFpkVtab, argc, argv, pzErr)))
 		goto onError;
 
 	/* Save metadata to backing tables. */
-	if ((rc = _bz_save_meta(db, pBzVtab, argc, argv, pzErr)))
+	if ((rc = _fpk_save_meta(db, pFpkVtab, argc, argv, pzErr)))
 		goto onError;
 
-	if (pBzVtab->iCreat & BZ_INIT_PREDEF) {
+	if (pFpkVtab->iCreat & FPK_INIT_PREDEF) {
 		/* Save data to backing tables. */
-		if ((rc = _bz_save_predef(db, pBzVtab, argc, argv, pzErr)))
+		if ((rc = _fpk_save_predef(db, pFpkVtab, argc, argv, pzErr)))
 			goto onError;
 		/* Build BSpline from predefs. */
-		if ((rc = _bz_build_bspline(db, pBzVtab, argc, argv, pzErr)))
+		if ((rc = _fpk_build_bspline(db, pFpkVtab, argc, argv, pzErr)))
 			goto onError;
 	}
-	else if (pBzVtab->iCreat & BZ_INIT_SMOOTH) {
+	else if (pFpkVtab->iCreat & FPK_INIT_SMOOTH) {
 		/* Build BSpline from data points. */
-		if ((rc = _bz_approx_bspline(db, pBzVtab, argc, argv, pzErr)))
+		if ((rc = _fpk_approx_bspline(db, pFpkVtab, argc, argv, pzErr)))
 			goto onError;
 		/* Save spline to backing table. */
-		if ((rc = _bz_save_bspline(db, pBzVtab, argc, argv, pzErr)))
+		if ((rc = _fpk_save_bspline(db, pFpkVtab, argc, argv, pzErr)))
 			goto onError;
 	}
 
 
 onError:
-	if (rc) bz_disconnect(&pBzVtab->p);
+	if (rc) fpk_disconnect(&pFpkVtab->p);
 	return rc;
 }
 
 // ----------------------------------------------------------------------------
-static int bz_connect(
+static int fpk_connect(
 	sqlite3 *db,
 	void *pAux,
 	int argc,
@@ -925,11 +914,11 @@ static int bz_connect(
 	char **pzErr)
 {
 	int rc = SQLITE_OK;
-	bz_vtab *pBzVtab = sqlite3_malloc(sizeof(bz_vtab));
-	memset(pBzVtab, 0, sizeof(bz_vtab));
-	pBzVtab->iCreat = BZ_INIT_CONNECT;
-	pBzVtab->db = db;
-	*ppVTab = (sqlite3_vtab*)pBzVtab;
+	fpk_vtab *pFpkVtab = sqlite3_malloc(sizeof(fpk_vtab));
+	memset(pFpkVtab, 0, sizeof(fpk_vtab));
+	pFpkVtab->iCreat = FPK_INIT_CONNECT;
+	pFpkVtab->db = db;
+	*ppVTab = (sqlite3_vtab*)pFpkVtab;
 
 	/* Set by subroutines on error. */
 	if (*pzErr) {
@@ -938,64 +927,64 @@ static int bz_connect(
 	}
 
 	/* Nr of knots and coefficient rows. */
-	if ((rc = _bz_parse_args(db, pBzVtab, argc, argv, pzErr)))
+	if ((rc = _fpk_parse_args(db, pFpkVtab, argc, argv, pzErr)))
 		goto onError;
  
 	/* Declare vtab schema. */
-	if ((rc = _bz_declare_vtab(db, pBzVtab, argc, argv, pzErr)))
+	if ((rc = _fpk_declare_vtab(db, pFpkVtab, argc, argv, pzErr)))
 		goto onError;
 
 	/* Try build BSpline. */
-	if ((rc = _bz_build_bspline(db, pBzVtab, argc, argv, pzErr)))
+	if ((rc = _fpk_build_bspline(db, pFpkVtab, argc, argv, pzErr)))
 		goto onError;
 
 onError:
-	if (rc) bz_disconnect(&pBzVtab->p);
+	if (rc) fpk_disconnect(&pFpkVtab->p);
 	return rc;
 }
 
 // ----------------------------------------------------------------------------
-static int bz_open(
+static int fpk_open(
 	sqlite3_vtab *pVtab,
 	sqlite3_vtab_cursor **ppCursor)
 {
-	bz_cursor *pBzCursor = sqlite3_malloc(sizeof(bz_cursor));
-	memset(pBzCursor, 0, sizeof(bz_cursor));
+	fpk_cursor *pFpkCursor = sqlite3_malloc(sizeof(fpk_cursor));
+	memset(pFpkCursor, 0, sizeof(fpk_cursor));
 
-	bz_vtab *pBzVtab = (bz_vtab*)pVtab;
-	pBzCursor->p.pVtab = pVtab;
-	pBzCursor->pRow = sqlite3_malloc(pBzVtab->iCdim * sizeof(float));
-	*ppCursor = &pBzCursor->p;
+	fpk_vtab *pFpkVtab = (fpk_vtab*)pVtab;
+	pFpkCursor->p.pVtab = pVtab;
+	pFpkCursor->pRow = sqlite3_malloc(pFpkVtab->iCdim * sizeof(float));
+	*ppCursor = &pFpkCursor->p;
 
 	return SQLITE_OK;
 }
 
 // ----------------------------------------------------------------------------
-static int bz_close(
+static int fpk_close(
 	sqlite3_vtab_cursor *pCursor)
 {
-	bz_cursor *pBzCursor = (bz_cursor*)pCursor;
+	fpk_cursor *pFpkCursor = (fpk_cursor*)pCursor;
 
-	if (pBzCursor->pX)
-		sqlite3_free(pBzCursor->pX);
-	sqlite3_free(pBzCursor->pRow);
-	sqlite3_free(pBzCursor);
+	if (pFpkCursor->pX)
+		sqlite3_free(pFpkCursor->pX);
+	sqlite3_free(pFpkCursor->pRow);
+	sqlite3_free(pFpkCursor);
 	return SQLITE_OK;
 }
 
 // ----------------------------------------------------------------------------
-static int bz_best_index(
+static int fpk_best_index(
 	sqlite3_vtab *pVTab,
 	sqlite3_index_info *pIdxInfo)
 {
-	bz_vtab *pBzVtab = (bz_vtab*)pVTab;
+	fpk_vtab *pFpkVtab = (fpk_vtab*)pVTab;
 	int iArg = 1;
 	unsigned char ops = 0;
 
 	/* No constraints implies a full spline evaluation. */
-	pIdxInfo->estimatedCost = (double)pBzVtab->iRowCount;
-	pIdxInfo->estimatedRows = pBzVtab->iRowCount;
-	pIdxInfo->idxNum = BZ_EVAL_RANGE;
+	pIdxInfo->estimatedCost = (double)pFpkVtab->iNRows;
+	pIdxInfo->estimatedRows = pFpkVtab->iNRows;
+	pIdxInfo->idxNum = FPK_EVAL_RANGE;
 
 	/* 1:st pass - check operands and column. */
 	for (int iC = 0; iC < pIdxInfo->nConstraint; iC++) {
@@ -1019,7 +1008,7 @@ static int bz_best_index(
 			if (pIdxInfo->aConstraint[iC].usable)
 				pIdxInfo->aConstraintUsage[iC].argvIndex = iArg++;
 
-		pIdxInfo->idxNum = BZ_EVAL_POINT;
+		pIdxInfo->idxNum = FPK_EVAL_POINT;
 		pIdxInfo->estimatedCost = (double)(iArg - 1);
 		pIdxInfo->estimatedRows = iArg - 1;
 		return SQLITE_OK;
@@ -1028,37 +1017,36 @@ static int bz_best_index(
 }
 
 // ----------------------------------------------------------------------------
-static int bz_next(
+static int fpk_next(
 	sqlite3_vtab_cursor *pCursor)
 {
-	bz_cursor *pBzCursor = (bz_cursor*)pCursor;
+	fpk_cursor *pFpkCursor = (fpk_cursor*)pCursor;
 
-	pBzCursor->bEval = 0;
-	pBzCursor->iCurX++;
+	pFpkCursor->bEval = 0;
+	pFpkCursor->iCurX++;
 	return SQLITE_OK;
 }
 
 // ----------------------------------------------------------------------------
-static int bz_column(
+static int fpk_column(
 	sqlite3_vtab_cursor *pCursor,
 	sqlite3_context *ctx,
 	int iColIdx)
 {
-	bz_cursor *pBzCursor = (bz_cursor*)pCursor;
-	assert(pBzCursor->iCurX < pBzCursor->iNumX);
-
+	fpk_cursor *pFpkCursor = (fpk_cursor*)pCursor;
+	assert(pFpkCursor->iCurX < pFpkCursor->iNumX);
 	if (iColIdx == 0) {
-		sqlite3_result_double(ctx, *(pBzCursor->pX + pBzCursor->iCurX));
+		sqlite3_result_double(ctx, *(pFpkCursor->pX + pFpkCursor->iCurX));
 		return SQLITE_OK;
 	}
-	if (!pBzCursor->bEval && _bz_eval_spline(pBzCursor)) {
+	if (!pFpkCursor->bEval && _fpk_eval_spline(pFpkCursor)) {
 		return SQLITE_ABORT;
 	}
-	sqlite3_result_double(ctx, *(pBzCursor->pRow + iColIdx - 1));
+	sqlite3_result_double(ctx, *(pFpkCursor->pRow + iColIdx - 1));
 	return SQLITE_OK;
 }
 
-static int bz_rowid(
+static int fpk_rowid(
 	sqlite3_vtab_cursor *pCursor,
 	sqlite_int64 *pRowid)
 {
@@ -1066,65 +1054,85 @@ static int bz_rowid(
 }
 
 // ----------------------------------------------------------------------------
-static int bz_eof(
+static int fpk_eof(
 	sqlite3_vtab_cursor *pCursor)
 {
-	bz_cursor *pBzCursor = (bz_cursor*)pCursor;
-	return pBzCursor->iCurX == pBzCursor->iNumX;
+	fpk_cursor *pFpkCursor = (fpk_cursor*)pCursor;
+	return pFpkCursor->iCurX == pFpkCursor->iNumX;
 }
 
 // ----------------------------------------------------------------------------
-static int bz_filter(
+static int fpk_filter(
 	sqlite3_vtab_cursor *pCursor,
 	int idxNum,
 	const char *idxStrUnused,
 	int argc,
 	sqlite3_value **argv)
 {
-	bz_cursor *pBzCursor = (bz_cursor*)pCursor;
-	bz_vtab *pBzVtab = (bz_vtab*)pCursor->pVtab;
+	fpk_cursor *pFpkCursor = (fpk_cursor*)pCursor;
+	fpk_vtab *pFpkVtab = (fpk_vtab*)pCursor->pVtab;
+	pFpkCursor->bEval = 0;
+	pFpkCursor->iCurX = 0;
 
-	pBzCursor->bEval = 0;
-	pBzCursor->iCurX = 0;
+	if (idxNum == FPK_EVAL_POINT) {
 
-	if (idxNum == BZ_EVAL_POINT) {
-
-		pBzCursor->iNumX = argc;
-		pBzCursor->pX = sqlite3_realloc(pBzCursor->pX, pBzCursor->iNumX * sizeof(float));
-		for (int i = 0; i < pBzCursor->iNumX; i++)
-			pBzCursor->pX[i] = sqlite3_value_double(argv[i]);
+		pFpkCursor->iNumX = argc;
+		pFpkCursor->pX = sqlite3_realloc(pFpkCursor->pX, pFpkCursor->iNumX * sizeof(float));
+		for (int i = 0; i < pFpkCursor->iNumX; i++)
+			pFpkCursor->pX[i] = sqlite3_value_double(argv[i]);
 	}
 
-	else if (idxNum == BZ_EVAL_RANGE) {
+	else if (idxNum == FPK_EVAL_RANGE) {
 
-		pBzCursor->iNumX = pBzVtab->iRowCount;
-		pBzCursor->pX = sqlite3_realloc(pBzCursor->pX, pBzCursor->iNumX * sizeof(float));
-		for (int i = 0; i < pBzCursor->iNumX; i++)
-			pBzCursor->pX[i] = pBzVtab->tMin + i * pBzVtab->tStep;
+		pFpkCursor->iNumX = pFpkVtab->iNRows;
+		pFpkCursor->pX = sqlite3_realloc(pFpkCursor->pX, pFpkCursor->iNumX * sizeof(float));
+		for (int i = 0; i < pFpkCursor->iNumX; i++)
+			pFpkCursor->pX[i] = pFpkVtab->tMin + i * pFpkVtab->tStep;
 	}
 	return SQLITE_OK;  
 }
 
+// ----------------------------------------------------------------------------
+static int fpk_find_func(
+  sqlite3_vtab *pVtab,
+  int nArg,
+  const char *zName,
+  void (**pxFunc)(sqlite3_context*,int,sqlite3_value**),
+  void **ppArg)
+{
+	if (!strcmp(zName, "fpk_derive")) {
+		*pxFunc = fpk_derive;
+		*ppArg = pVtab;
+		return 1;
+	}
+	else if (!strcmp(zName, "fpk_evaluate")) {
+		*pxFunc = fpk_eval;
+		*ppArg = pVtab;
+		return 1;
+	}
+	return 0;
+}
+
 static sqlite3_module s_bzModule = {
 	1,                       /* iVersion */
-	bz_create,               /* xCreate */
-	bz_connect,              /* xConnect */
-	bz_best_index,           /* xBestIndex */
-	bz_disconnect,           /* xDisconnect */
-	bz_destroy,              /* xDestroy */
-	bz_open,                 /* xOpen */
-	bz_close,                /* xClose */
-	bz_filter,               /* xFilter */
-	bz_next,                 /* xNext */
-	bz_eof,                  /* xEof */
-	bz_column,               /* xColumn */
-	bz_rowid,                /* xRowid */
+	fpk_create,              /* xCreate */
+	fpk_connect,             /* xConnect */
+	fpk_best_index,          /* xBestIndex */
+	fpk_disconnect,          /* xDisconnect */
+	fpk_destroy,             /* xDestroy */
+	fpk_open,                /* xOpen */
+	fpk_close,               /* xClose */
+	fpk_filter,              /* xFilter */
+	fpk_next,                /* xNext */
+	fpk_eof,                 /* xEof */
+	fpk_column,              /* xColumn */
+	fpk_rowid,               /* xRowid */
 	0,                       /* xUpdate */
 	0,                       /* xBegin */
 	0,                       /* xSync */
 	0,                       /* xCommit */
 	0,                       /* xRollback */
-	0,                       /* xFindMethod */
+	fpk_find_func,           /* xFindMethod */
 	0,                       /* xRename */
 	0,                       /* xSavepoint */
 	0,                       /* xRelease */
@@ -1137,6 +1145,8 @@ static sqlite3_module s_bzModule = {
 
 #ifdef _WIN32
 __declspec(dllexport)
+#else
+__attribute__((visibility("default")))
 #endif
 int sqlite3_extension_init(
 	sqlite3 *db, 
@@ -1149,10 +1159,20 @@ int sqlite3_extension_init(
 	/* For WITHOUT ROWID clause. */
 	if (sqlite3_libversion_number() < 3014000 && pzErrMsg != 0){
 		*pzErrMsg = sqlite3_mprintf(
-		"fitpack_spline() requires SQLite 3.14.0 or later");
+			"fpk_spline() requires SQLite 3.14.0 or later");
 		return SQLITE_ERROR;
 	}
 
-	rc = sqlite3_create_module(db, "fitpack_spline", &s_bzModule, NULL);
+	for (int nArg = 2; nArg <= 3; nArg++) {
+		if ((rc = sqlite3_overload_function(db, "fpk_derive", nArg))) {
+			*pzErrMsg = sqlite3_mprintf("failed to register function");
+			return SQLITE_ERROR;
+		}
+		if ((rc = sqlite3_overload_function(db, "fpk_evaluate", nArg))) {
+			*pzErrMsg = sqlite3_mprintf("failed to register function");
+			return SQLITE_ERROR;
+		}
+	}
+	rc = sqlite3_create_module(db, "fpk_spline", &s_bzModule, NULL);
 	return rc;
 }

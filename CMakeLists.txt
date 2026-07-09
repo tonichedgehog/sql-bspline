@@ -27,7 +27,7 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 cmake_minimum_required(VERSION 3.25)
-project(SQLSPLINE VERSION 1.0 LANGUAGES C Fortran)
+project(SQLSPLINE VERSION 1.1 LANGUAGES C Fortran)
 
 set(CMAKE_Fortran_COMPILER fort77)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -35,22 +35,28 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 find_package(SQLite3 REQUIRED)
 add_subdirectory(dep/dierckx)
 add_library(bspline OBJECT bspline.c)
+set_target_properties(bspline PROPERTIES
+  C_VISIBILITY_PRESET hidden
+  )
 target_link_libraries(bspline
   PUBLIC dierckx
   )
-add_library(sqlspline SHARED extension.c)
+add_library(fpk_spline SHARED extension.c)
 set_source_files_properties(extension.c bspline.c PROPERTIES
-  COMPILE_OPTIONS "-Wall;-pedantic"
+  COMPILE_OPTIONS "$<$<C_COMPILER_ID:GNU>:-Wall;-pedantic>"
   )
-target_link_libraries(sqlspline
+target_link_libraries(fpk_spline
   PRIVATE SQLite::SQLite3
   bspline
   )
-set_target_properties(sqlspline PROPERTIES
-  OUTPUT_NAME fitpack_spline
+set_target_properties(fpk_spline PROPERTIES
+  C_VISIBILITY_PRESET hidden
   PREFIX ""
   )
 add_executable(testprog tests/testprog.c)
+target_compile_definitions(testprog
+  PRIVATE -DFPK_EXTENSION="$<TARGET_FILE:fpk_spline>"
+  )
 target_link_libraries(testprog
   PRIVATE SQLite::SQLite3
   bspline

@@ -13,7 +13,9 @@ add_library(dierckx STATIC
   fprota.f
   parcur.f
   )
-
+set_target_properties(dierckx PROPERTIES
+  Fortran_VISIBILITY_PRESET hidden
+  )
 target_include_directories(dierckx INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   )

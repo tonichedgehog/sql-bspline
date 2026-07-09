@@ -1,5 +1,4 @@
 __pycache__
 .vscode
+.leftovers
 *.db
-dep/fitpackpp
-dep/interpolate

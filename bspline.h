@@ -91,5 +91,25 @@ int splprep(bspline **spline, float *x, int idim, int m,
  *   - x:      Evaluation points.
  *   - y:      Result vector.
  *   - m:      Number of points.
+ *
+ * Return value:
+ *   - The error code obtained from the curev Fortran routine, rc = 0 is
+ *     considered success.
  */
 int splev(bspline *spline, float *x, float *y, int m);
+
+/**
+ * Compute all derivatives of parametric spline at given knot. See
+ * dierckx/cualde.f for details.
+ *
+ * Parameters:
+ *   - spline: Spline to compute derivatives for.
+ *   - u:      Point point where derivatives is evaluated.
+ *   - d:      Result array with derivatives.
+ *   - nd:     Result array dimension, nd >= k1*idim.
+ * 
+ * Return value:
+ *   - The error code obtained from the cualde Fortran routine, rc = 0 is
+ *     considered success.
+ */
+int splder(bspline *spline, float u, float *d, int nd);

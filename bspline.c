@@ -44,6 +44,7 @@
 int splcreate(bspline **spline, float* t, int n, float*c, int nc, int idim,
 	int k)
 {
+	if (nc < k + 1) return -1;
 	(*spline) = sqlite3_malloc(sizeof(bspline));
 	(*spline)->t = t;
 	(*spline)->c = c;
@@ -134,5 +135,15 @@ int splev(bspline *spline, float *x, float *y, int m)
 
 	curev_(&spline->idim, spline->t, &spline->n, spline->c, &spline->nc, 
 		&spline->k, x, &m, y, &mx, &ierr);
+	return ierr;
+}
+
+int splder(bspline *spline, float u, float *d, int nd)
+{
+	int ierr = 0;
+	int order = spline->k + 1;
+	assert(nd >= order * spline->idim);
+	cualde_(&spline->idim, spline->t, &spline->n, spline->c, &spline->nc,
+		&order, &u, d, &nd, &ierr);
 	return ierr;
 }
